@@ -1,0 +1,47 @@
+services:
+  db:
+    # Versión exacta fijada: las mediciones de la matriz solo son comparables si Postgres no cambia.
+    image: postgres:18.6-bookworm
+    environment:
+      POSTGRES_USER: reservas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reservas}
+      POSTGRES_DB: reservas
+    ports:
+      # Solo local; 5433 para no chocar con un Postgres instalado en el host.
+      - "127.0.0.1:${DB_PUERTO:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reservas -d reservas"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrar:
+    build: ./backend
+    command: ["python", "-m", "app.migrar"]
+    environment: &entorno-api
+      DATABASE_URL: postgresql://reservas:${POSTGRES_PASSWORD:-reservas}@db:5432/reservas
+      POOL_SIZE: ${POOL_SIZE:-20}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: ./backend
+    environment: *entorno-api
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrar:
+        condition: service_completed_successfully
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
