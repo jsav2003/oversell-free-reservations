@@ -23,6 +23,9 @@ services:
     environment: &entorno-api
       DATABASE_URL: postgresql://reservas:${POSTGRES_PASSWORD:-reservas}@db:5432/reservas
       POOL_SIZE: ${POOL_SIZE:-20}
+      ESTRATEGIA: ${ESTRATEGIA:-e5}
+      AISLAMIENTO: ${AISLAMIENTO:-serializable}
+      MAX_REINTENTOS: ${MAX_REINTENTOS:-50}
     depends_on:
       db:
         condition: service_healthy

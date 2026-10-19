@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 import asyncpg
 from fastapi import FastAPI
 
-from app.config import DATABASE_URL, POOL_SIZE
+from app.config import AISLAMIENTO, DATABASE_URL, ESTRATEGIA, POOL_SIZE
 
 
 @asynccontextmanager
@@ -22,4 +22,10 @@ app = FastAPI(title="Reservas sin sobreventa", lifespan=lifespan)
 async def salud():
     async with app.state.pool.acquire() as conn:
         version = await conn.fetchval("SHOW server_version")
-    return {"estado": "ok", "postgres": version, "pool": POOL_SIZE}
+    return {
+        "estado": "ok",
+        "postgres": version,
+        "pool": POOL_SIZE,
+        "estrategia": ESTRATEGIA,
+        "aislamiento": AISLAMIENTO,
+    }
