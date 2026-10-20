@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 
+import asyncio
+import os
 from dataclasses import asdict
 
 import asyncpg
@@ -8,6 +10,7 @@ from pydantic import BaseModel
 
 from app.config import AISLAMIENTO, DATABASE_URL, ESTRATEGIA, POOL_SIZE
 from app.estrategias import comprar
+from app.retenciones import confirmar, retener
 
 
 @asynccontextmanager
@@ -49,4 +52,45 @@ async def reservar(compra: Compra):
         app.state.pool, compra.evento_id, compra.usuario_id,
         compra.clave_idempotencia, compra.asiento_id,
     )
+    if resultado.estado == "exitosa":
+        await _falla_tras_commit()
     return asdict(resultado)
+
+
+# Inyección de fallas (§8.4). Solo para los escenarios de carga/fallas.py: sin la variable
+# FALLA no hace nada. Se dispara después del COMMIT y antes de responder, que es la ventana
+# del commit ambiguo (§3.4).
+FALLA = os.environ.get("FALLA", "")
+
+
+async def _falla_tras_commit():
+    if FALLA == "morir_tras_commit":
+        os._exit(1)  # el proceso muere sin responder ni cerrar nada, como un kill -9
+    if FALLA == "demora_tras_commit":
+        await asyncio.sleep(2)  # el cliente se cansa de esperar y corta antes de la respuesta
+
+
+class Retencion(BaseModel):
+    evento_id: int
+    usuario_id: str
+    clave_idempotencia: str
+    asiento_id: int
+    ttl_segundos: float = 600
+
+
+@app.post("/retenciones")
+async def retener_asiento(r: Retencion):
+    resultado = await retener(
+        app.state.pool, r.evento_id, r.usuario_id, r.clave_idempotencia,
+        r.asiento_id, r.ttl_segundos)
+    return {**asdict(resultado),
+            "vence_en": resultado.vence_en.isoformat() if resultado.vence_en else None}
+
+
+class Confirmacion(BaseModel):
+    usuario_id: str
+
+
+@app.post("/reservas/{reserva_id}/confirmar")
+async def confirmar_reserva(reserva_id: int, c: Confirmacion):
+    return asdict(await confirmar(app.state.pool, reserva_id, c.usuario_id))
