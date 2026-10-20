@@ -6,11 +6,13 @@ from dataclasses import asdict
 
 import asyncpg
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.config import AISLAMIENTO, DATABASE_URL, ESTRATEGIA, POOL_SIZE
 from app.estrategias import comprar
 from app.retenciones import confirmar, retener
+from app.vivo import router as vivo
 
 
 @asynccontextmanager
@@ -23,6 +25,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Reservas sin sobreventa", lifespan=lifespan)
+# El navegador (puerto 3000) llama a la API (puerto 8000): otro origen.
+app.add_middleware(
+    CORSMiddleware, allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_methods=["*"], allow_headers=["*"])
+app.include_router(vivo)
 
 
 @app.get("/salud")
