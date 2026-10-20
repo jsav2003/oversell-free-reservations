@@ -58,12 +58,14 @@ def percentil(valores: list[float], p: float) -> float:
     return ordenados[min(len(ordenados) - 1, int(p * len(ordenados)))]
 
 
-async def una_corrida(conn, estrategia, aislamiento, compradores, contencion, capacidad, semilla):
+async def una_corrida(conn, estrategia, aislamiento, compradores, contencion, capacidad, semilla,
+                      max_reintentos_cliente):
     evento_id = await conn.fetchval(
         "INSERT INTO eventos (nombre, capacidad) VALUES ($1, $2) RETURNING id",
         f"matriz-{uuid.uuid4()}", capacidad)
     corrida = await correr(f"http://127.0.0.1:{PUERTO}", evento_id, compradores,
-                           capacidad, estrategia == "e4", semilla)
+                           capacidad, estrategia == "e4", semilla,
+                           max_reintentos_cliente)
     violaciones = await verificar(conn, evento_id, corrida.registros)
     regs = corrida.registros
     exitosas = [r for r in regs if r.estado == "exitosa"]
@@ -82,7 +84,8 @@ async def una_corrida(conn, estrategia, aislamiento, compradores, contencion, ca
     }
 
 
-async def correr_matriz(concurrencias, salida: Path, pool_size: int) -> list[dict]:
+async def correr_matriz(concurrencias, salida: Path, pool_size: int,
+                        max_reintentos_cliente: int) -> list[dict]:
     resultados = []
     conn = await asyncpg.connect(DATABASE_URL)
     try:
@@ -94,7 +97,8 @@ async def correr_matriz(concurrencias, salida: Path, pool_size: int) -> list[dic
                         for contencion, capacidad in contenciones(compradores).items():
                             for semilla in SEMILLAS:
                                 r = await una_corrida(conn, estrategia, aislamiento,
-                                                      compradores, contencion, capacidad, semilla)
+                                                      compradores, contencion, capacidad, semilla,
+                                                      max_reintentos_cliente)
                                 resultados.append(r)
                                 print(f"{estrategia} {aislamiento} n={compradores} "
                                       f"{contencion} s={semilla}: sobreventa={r['sobreventa']} "
@@ -115,7 +119,8 @@ def celda(valores: list[float], decimales: int = 0) -> str:
     return f"{media:.{decimales}f} [{min(valores):.{decimales}f}–{max(valores):.{decimales}f}]"
 
 
-def escribir_resultados(resultados: list[dict], destino: Path, pool_size: int) -> None:
+def escribir_resultados(resultados: list[dict], destino: Path, pool_size: int,
+                        reintentos_cliente: int) -> None:
     """Media y rango por celda; nunca la mejor corrida (§8.3)."""
     grupos: dict[tuple, list[dict]] = {}
     for r in resultados:
@@ -124,6 +129,7 @@ def escribir_resultados(resultados: list[dict], destino: Path, pool_size: int) -
     lineas = [
         "# RESULTS", "",
         f"Generado por `python -m carga.matriz`. Pool de la API: {pool_size} conexiones. "
+        f"Reintentos del cliente ante 40001: hasta {reintentos_cliente} (0 = no reintenta). "
         f"Cada celda: media [mín–máx] de {len(SEMILLAS)} semillas.", "",
         "Violaciones: **sobreventa** = reservas por encima de la capacidad; **dup** = asientos "
         "con más de una reserva; **infiel** = respuestas que no corresponden a la base; "
@@ -149,10 +155,14 @@ def main() -> None:
     parser.add_argument("--rapida", action="store_true", help="solo 10 y 100 compradores")
     parser.add_argument("--salida", type=Path, default=Path("resultados"))
     parser.add_argument("--pool", type=int, default=20)
+    parser.add_argument("--reintentos-cliente", type=int, default=0,
+                        help="veces que el cliente repite una compra abortada (40001)")
     args = parser.parse_args()
     concurrencias = (10, 100) if args.rapida else (10, 100, 1000)
-    resultados = asyncio.run(correr_matriz(concurrencias, args.salida, args.pool))
-    escribir_resultados(resultados, args.salida / "RESULTS.md", args.pool)
+    resultados = asyncio.run(correr_matriz(concurrencias, args.salida, args.pool,
+                                         args.reintentos_cliente))
+    escribir_resultados(resultados, args.salida / "RESULTS.md", args.pool,
+                        args.reintentos_cliente)
 
 
 if __name__ == "__main__":

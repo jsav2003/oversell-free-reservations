@@ -29,8 +29,7 @@ class Corrida:
     duracion: float  # segundos de pared de toda la corrida
 
 
-async def _comprar(cliente, evento_id, usuario_id, clave, asiento_id) -> Registro:
-    inicio = time.perf_counter()
+async def _una_solicitud(cliente, evento_id, usuario_id, clave, asiento_id):
     try:
         respuesta = await cliente.post("/reservas", json={
             "evento_id": evento_id, "usuario_id": usuario_id,
@@ -38,18 +37,32 @@ async def _comprar(cliente, evento_id, usuario_id, clave, asiento_id) -> Registr
         })
         if respuesta.status_code == 200:
             cuerpo = respuesta.json()
-            estado, reserva_id, reintentos = (
-                cuerpo["estado"], cuerpo["reserva_id"], cuerpo["reintentos"])
-        else:
-            estado, reserva_id, reintentos = "error", None, 0
+            return cuerpo["estado"], cuerpo["reserva_id"], cuerpo["reintentos"]
     except httpx.HTTPError:
-        estado, reserva_id, reintentos = "error", None, 0
-    return Registro(usuario_id, clave, asiento_id, estado, reserva_id, reintentos,
-                    time.perf_counter() - inicio)
+        pass
+    return "error", None, 0
+
+
+async def _comprar(cliente, evento_id, usuario_id, clave, asiento_id,
+                   max_reintentos_cliente) -> Registro:
+    """Una compra. Si el servidor responde "abortada" (40001) y el cliente reintenta, repite
+    con la misma clave hasta max_reintentos_cliente veces; `reintentos` suma los del servidor
+    (E5) y los del cliente, y la latencia incluye todos los intentos."""
+    inicio = time.perf_counter()
+    reintentos_cliente = 0
+    while True:
+        estado, reserva_id, reintentos = await _una_solicitud(
+            cliente, evento_id, usuario_id, clave, asiento_id)
+        if estado != "abortada" or reintentos_cliente >= max_reintentos_cliente:
+            break
+        reintentos_cliente += 1
+    return Registro(usuario_id, clave, asiento_id, estado, reserva_id,
+                    reintentos + reintentos_cliente, time.perf_counter() - inicio)
 
 
 async def correr(url_api: str, evento_id: int, compradores: int, capacidad: int,
-                 por_asiento: bool, semilla: int) -> Corrida:
+                 por_asiento: bool, semilla: int,
+                 max_reintentos_cliente: int = 0) -> Corrida:
     """Lanza `compradores` solicitudes a la vez. Con `por_asiento` (E4) cada una elige un
     asiento al azar entre 1..capacidad: dos compradores pueden querer el mismo."""
     azar = random.Random(semilla)
@@ -64,6 +77,7 @@ async def correr(url_api: str, evento_id: int, compradores: int, capacidad: int,
     async with httpx.AsyncClient(base_url=url_api, limits=limites, timeout=300) as cliente:
         inicio = time.perf_counter()
         registros = await asyncio.gather(
-            *(_comprar(cliente, evento_id, u, c, a) for u, c, a in pedidos))
+            *(_comprar(cliente, evento_id, u, c, a, max_reintentos_cliente)
+              for u, c, a in pedidos))
         duracion = time.perf_counter() - inicio
     return Corrida(list(registros), duracion)
