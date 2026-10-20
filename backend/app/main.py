@@ -1,9 +1,13 @@
 from contextlib import asynccontextmanager
 
+from dataclasses import asdict
+
 import asyncpg
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from app.config import AISLAMIENTO, DATABASE_URL, ESTRATEGIA, POOL_SIZE
+from app.estrategias import comprar
 
 
 @asynccontextmanager
@@ -29,3 +33,20 @@ async def salud():
         "estrategia": ESTRATEGIA,
         "aislamiento": AISLAMIENTO,
     }
+
+
+class Compra(BaseModel):
+    evento_id: int
+    usuario_id: str
+    clave_idempotencia: str
+    asiento_id: int | None = None
+
+
+@app.post("/reservas")
+async def reservar(compra: Compra):
+    """Compra un puesto con la estrategia y el nivel configurados (§6)."""
+    resultado = await comprar(
+        app.state.pool, compra.evento_id, compra.usuario_id,
+        compra.clave_idempotencia, compra.asiento_id,
+    )
+    return asdict(resultado)
