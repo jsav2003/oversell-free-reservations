@@ -1,4 +1,6 @@
 """El verificador tiene que detectar lo que dice detectar: se prueba con bases sembradas a mano."""
+from datetime import timedelta
+
 from carga.generador import Registro
 from carga.invariantes import verificar
 
@@ -22,7 +24,7 @@ async def test_corrida_limpia_no_tiene_violaciones(pool, crear_evento):
         v = await verificar(conn, evento_id, registros)
     assert (v["sobreventa"], v["asientos_duplicados"], v["respuestas_infieles"],
             v["claves_repetidas"]) == (0, 0, 0, 0)
-    assert v["retenciones"] is None  # no verificado hasta la F4
+    assert v["retenciones"] == 0
 
 
 async def test_detecta_sobreventa(pool, crear_evento):
@@ -64,3 +66,20 @@ async def test_detecta_respuestas_infieles(pool, crear_evento):
     async with pool.acquire() as conn:
         v = await verificar(conn, evento_id, registros)
     assert v["respuestas_infieles"] == 2
+
+
+async def test_detecta_confirmacion_con_retencion_vencida_o_ajena(pool, crear_evento):
+    evento_id = await crear_evento(5)
+    insertar_confirmada = (
+        "INSERT INTO reservas (evento_id, usuario_id, asiento_id, estado, vence_en, "
+        "clave_idempotencia, confirmada_en, confirmada_por) VALUES "
+        "($1, 'u', $2, 'confirmada', now() + $3::interval, $4, now(), $5)")
+    # 1: confirmada con la retención ya vencida. 2: confirmada por quien no la retuvo.
+    # 3: legítima, antes de vencer y por su dueño.
+    minuto = timedelta(minutes=1)
+    for asiento, vence, quien in ((1, -minuto, "u"), (2, minuto, "intruso"), (3, minuto, "u")):
+        await pool.execute(insertar_confirmada, evento_id, asiento, vence,
+                           f"{evento_id}-r{asiento}", quien)
+    async with pool.acquire() as conn:
+        v = await verificar(conn, evento_id, [])
+    assert v["retenciones"] == 2

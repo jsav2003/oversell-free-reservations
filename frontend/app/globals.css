@@ -1,0 +1,69 @@
+:root {
+  --fondo: #f7f7f5;
+  --texto: #1b1b1a;
+  --suave: #6b6b66;
+  --borde: #d9d9d3;
+  --libre: #ffffff;
+  --mio: #2f6fed;
+  --otro: #c9c9c2;
+  --retenido: #f2b84b;
+  --vendido: #3a9d6a;
+  --error: #d6322c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fondo: #151514;
+    --texto: #ececea;
+    --suave: #9a9a94;
+    --borde: #3a3a37;
+    --libre: #1f1f1e;
+    --otro: #4a4a46;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--texto);
+  font: 15px/1.5 system-ui, sans-serif;
+}
+main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+nav { display: flex; gap: 16px; margin-bottom: 20px; }
+a { color: var(--mio); }
+h1 { font-size: 1.4rem; margin: 0 0 4px; }
+.suave { color: var(--suave); }
+.fila { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin: 12px 0; }
+label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--suave); }
+input, select, button {
+  font: inherit; color: inherit; background: var(--libre);
+  border: 1px solid var(--borde); border-radius: 6px; padding: 6px 10px;
+}
+button { cursor: pointer; }
+button.primario { background: var(--mio); border-color: var(--mio); color: #fff; }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.mapa { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; margin: 16px 0; }
+.asiento {
+  aspect-ratio: 1; display: grid; place-items: center; border-radius: 6px;
+  border: 1px solid var(--borde); background: var(--libre); font-size: 0.8rem;
+  position: relative;
+}
+button.asiento { padding: 0; }
+.asiento.otro { background: var(--otro); color: var(--suave); }
+.asiento.retenido { background: var(--retenido); color: #000; }
+.asiento.mio { background: var(--mio); border-color: var(--mio); color: #fff; }
+.asiento.pendiente { background: var(--mio); border-style: dashed; opacity: 0.55; color: #fff; }
+.asiento.vendido { background: var(--vendido); border-color: var(--vendido); color: #fff; }
+.asiento.sobreventa { background: var(--error); border-color: var(--error); color: #fff; }
+.asiento small { position: absolute; bottom: 2px; font-size: 0.6rem; }
+
+.aviso { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--borde); margin: 8px 0; }
+.aviso.error { border-color: var(--error); color: var(--error); }
+.leyenda { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.8rem; color: var(--suave); }
+.leyenda span::before {
+  content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 5px;
+  border-radius: 2px; border: 1px solid var(--borde); background: var(--c, var(--libre));
+}
+table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--borde); }
+td.mal { color: var(--error); font-weight: 600; }

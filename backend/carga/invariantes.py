@@ -1,8 +1,6 @@
 """Verificador de invariantes (DESIGN.md §8.2), sobre la base final y el registro de la corrida.
 
-Devuelve cuántas violaciones hubo de cada invariante. El 5 (retenciones) no aplica hasta
-la F4: todavía no hay retenciones, así que se reporta None y no 0, para no afirmar lo que
-no se verificó.
+Devuelve cuántas violaciones hubo de cada invariante.
 """
 from collections import Counter
 
@@ -43,6 +41,13 @@ async def verificar(conn: asyncpg.Connection, evento_id: int,
     #    impide con UNIQUE; se verifica igual por si alguna vez deja de ser así.
     claves_repetidas = sum(1 for ids in por_clave.values() if len(ids) > 1)
 
+    # 5. Retenciones: ninguna reserva se confirmó con la retención vencida o ajena. Se audita con
+    #    lo que la base anotó al confirmar (confirmada_en, confirmada_por), no con el registro
+    #    del cliente. Las compras directas no pasan por una retención y las deja en NULL.
+    retenciones_invalidas = await conn.fetchval(
+        "SELECT count(*) FROM reservas WHERE evento_id = $1 AND confirmada_en IS NOT NULL "
+        "AND (confirmada_en > vence_en OR confirmada_por <> usuario_id)", evento_id)
+
     return {
         "capacidad": capacidad,
         "reservas": len(reservas),
@@ -50,5 +55,5 @@ async def verificar(conn: asyncpg.Connection, evento_id: int,
         "asientos_duplicados": asientos_duplicados,
         "respuestas_infieles": respuestas_infieles,
         "claves_repetidas": claves_repetidas,
-        "retenciones": None,  # F4
+        "retenciones": retenciones_invalidas,
     }

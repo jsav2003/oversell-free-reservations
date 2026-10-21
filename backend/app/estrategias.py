@@ -140,11 +140,42 @@ async def e5(pool, aislamiento, evento_id, usuario_id, clave, asiento_id=None):
 ESTRATEGIAS = {"e1": e1, "e2": e2, "e3": e3, "e4": e4, "e5": e5}
 
 
+POR_CLAVE = "SELECT id, evento_id, usuario_id FROM reservas WHERE clave_idempotencia = $1"
+CLAVE_UNICA = "reservas_clave_idempotencia_key"
+
+
+async def _reserva_de_la_clave(pool, clave, evento_id, usuario_id) -> Resultado | None:
+    """La reserva que ya existe para esta clave (§3.4), o None. Una clave que ya sirvió a
+    otro evento u otro usuario no es un reintento: es un error del cliente."""
+    fila = await pool.fetchrow(POR_CLAVE, clave)
+    if fila is None:
+        return None
+    if fila["evento_id"] != evento_id or fila["usuario_id"] != usuario_id:
+        return Resultado("clave_reutilizada")
+    return Resultado("exitosa", fila["id"])
+
+
 async def comprar(
     pool, evento_id, usuario_id, clave, asiento_id=None,
     *, estrategia=ESTRATEGIA, aislamiento=AISLAMIENTO,
 ):
-    """Compra un puesto con la estrategia y el nivel configurados (o los pedidos)."""
-    return await ESTRATEGIAS[estrategia](
-        pool, aislamiento, evento_id, usuario_id, clave, asiento_id
-    )
+    """Compra un puesto con la estrategia y el nivel configurados (o los pedidos).
+
+    Idempotente por `clave` (§3.4): un reintento con la misma clave devuelve la reserva que ya
+    existe en vez de crear otra. El camino feliz no paga nada extra: la búsqueda por clave solo
+    se hace cuando la compra no salió bien, que es cuando puede ser un reintento de una compra
+    que sí se confirmó (agotado y ocupado también pueden ser la respuesta a un reintento).
+    """
+    try:
+        resultado = await ESTRATEGIAS[estrategia](
+            pool, aislamiento, evento_id, usuario_id, clave, asiento_id
+        )
+    except asyncpg.UniqueViolationError as error:
+        # Dos solicitudes con la misma clave a la vez: la segunda pierde contra el UNIQUE.
+        if error.constraint_name != CLAVE_UNICA:
+            raise
+        return (await _reserva_de_la_clave(pool, clave, evento_id, usuario_id)
+                or Resultado("abortada"))
+    if resultado.estado == "exitosa":
+        return resultado
+    return await _reserva_de_la_clave(pool, clave, evento_id, usuario_id) or resultado
