@@ -1,75 +1,82 @@
 # PREDICTIONS
 
-Escrito el **2026-10-19**, antes de medir nada: a esta fecha no existe ninguna estrategia
-implementada ni ninguna corrida de carga (solo el andamiaje de la F0).
+Written on **2026-10-19**, before measuring anything: on that date no strategy was
+implemented and no load run existed (only the F0 scaffolding).
 
-**Este archivo no se edita después de medir.** Si una predicción falla, eso es un
-resultado: va a `RESULTS.md` y `ANOMALIES.md` con su explicación, y aquí se queda como
-estaba. Las únicas adiciones permitidas son nuevas predicciones, con su propia fecha, y
-solo antes de la medición que las pondría a prueba.
+**This file is not edited after measuring.** If a prediction fails, that is a result: it goes
+to `RESULTS.md` and `ANOMALIES.md` with its explanation, and here it stays as it was. The only
+additions allowed are new predictions, with their own date, and only before the measurement
+that would put them to the test.
 
-Fuente: columna "Predicción" de la tabla de DESIGN.md §4, copiada sin cambios.
+*(Translated to English on 2026-10-22. The content is unchanged: the translation is of the
+2026-10-19 text, not a revision of it. The original Spanish is in the git history.)*
 
-## Predicciones
+Source: the "Prediction" column of the table in DESIGN.md §4, copied unchanged.
 
-| # | Estrategia | Modelo | Predicción |
+## Predictions
+
+| # | Strategy | Model | Prediction |
 |---|---|---|---|
-| E1 | Leer y luego insertar | Capacidad | Sobrevende en READ COMMITTED y en REPEATABLE READ |
-| E2 | `UPDATE` condicional atómico | Capacidad | No sobrevende en READ COMMITTED; en REPEATABLE READ aborta y exige reintento |
-| E3 | Bloqueo pesimista (`SELECT ... FOR UPDATE`) | Capacidad | No sobrevende en READ COMMITTED; **en REPEATABLE READ puede sobrevender**; throughput limitado por la fila caliente |
-| E4 | Restricción `UNIQUE` | Asiento | No hay doble reserva del mismo asiento |
-| E5 | `SERIALIZABLE` con reintento | Capacidad | No sobrevende; tasa de abortos alta bajo contención |
+| E1 | Read, then insert | Capacity | Oversells under READ COMMITTED and under REPEATABLE READ |
+| E2 | Atomic conditional `UPDATE` | Capacity | Does not oversell under READ COMMITTED; under REPEATABLE READ it aborts and requires a retry |
+| E3 | Pessimistic lock (`SELECT ... FOR UPDATE`) | Capacity | Does not oversell under READ COMMITTED; **under REPEATABLE READ it can oversell**; throughput limited by the hot row |
+| E4 | `UNIQUE` constraint | Seat | No double booking of the same seat |
+| E5 | `SERIALIZABLE` with retry | Capacity | Does not oversell; high abort rate under contention |
 
-### Razonamiento detrás de las dos predicciones menos obvias
+### Reasoning behind the two least obvious predictions
 
-- **E2 en READ COMMITTED no sobrevende:** cuando dos `UPDATE` compiten por la misma fila,
-  el segundo espera al primero y reevalúa el `WHERE` sobre la versión nueva de la fila. Es
-  comportamiento documentado de Postgres, no timing.
-- **E3 en REPEATABLE READ sobrevende:** la foto de la base se toma al inicio de la primera
-  sentencia. Si B espera en el `FOR UPDATE` mientras A inserta y confirma, B obtiene el
-  bloqueo con una foto anterior a la inserción de A. A solo bloqueó la fila del evento, no
-  la modificó, así que Postgres no aborta a B: B cuenta 99 y vende el puesto 101. Hipótesis
-  razonada, no comprobada; la F2 la confirma o la refuta con un test determinista.
+- **E2 under READ COMMITTED does not oversell:** when two `UPDATE`s compete for the same row,
+  the second waits for the first and re-evaluates the `WHERE` on the new version of the row.
+  This is documented Postgres behavior, not timing.
+- **E3 under REPEATABLE READ oversells:** the database snapshot is taken at the start of the
+  first statement. If B waits on the `FOR UPDATE` while A inserts and commits, B gets the lock
+  with a snapshot from before A's insert. A only locked the event row, it did not modify it,
+  so Postgres does not abort B: B counts 99 and sells seat 101. A reasoned hypothesis, not
+  checked; F2 confirms or refutes it with a deterministic test.
 
-## Combinaciones sin predicción explícita en el diseño
+## Combinations with no explicit prediction in the design
 
-La tabla de DESIGN.md §4 no dice nada sobre estas combinaciones. La F2 exige declarar para
-cada estrategia y nivel "la anomalía esperada o su ausencia".
+The table in DESIGN.md §4 says nothing about these combinations. F2 requires declaring, for
+each strategy and level, "the expected anomaly or its absence".
 
-### Añadidas el 2026-10-19 (antes de medir)
+### Added on 2026-10-19 (before measuring)
 
-Razonadas desde la documentación de PostgreSQL, "Transaction Isolation" (§13.2) y "Index
-Uniqueness Checks". Son hipótesis: la F2 las confirma o las refuta.
+Reasoned from the PostgreSQL documentation, "Transaction Isolation" (§13.2) and "Index
+Uniqueness Checks". They are hypotheses: F2 confirms or refutes them.
 
-**E1 en SERIALIZABLE — no sobrevende; la segunda transacción aborta con `40001`.**
-El `count(*)` de cada comprador deja un bloqueo de predicado y el `INSERT` del otro cae
-dentro de lo que leyó: dependencia circular, sin orden serial posible, así que SSI aborta
-una. Es el ejemplo de la propia documentación; sin reintento, la sobreventa se vuelve compra fallida.
+**E1 under SERIALIZABLE — does not oversell; the second transaction aborts with `40001`.**
+Each buyer's `count(*)` leaves a predicate lock and the other's `INSERT` falls inside what was
+read: a circular dependency, no serial order possible, so SSI aborts one. It is the
+documentation's own example; without a retry, overselling turns into a failed purchase.
 
-**E2 en SERIALIZABLE — no sobrevende; el perdedor aborta con `could not serialize access due to concurrent update`.**
-Serializable "funciona igual que Repeatable Read" más el rastreo de dependencias, y el
-`UPDATE` sí modifica la fila, así que el segundo aborta aunque aún queden cupos (no
-reevalúa el `WHERE` como en READ COMMITTED). Abortos concentrados en la fila caliente.
+**E2 under SERIALIZABLE — does not oversell; the loser aborts with `could not serialize access due to concurrent update`.**
+Serializable "works the same as Repeatable Read" plus dependency tracking, and the `UPDATE`
+does modify the row, so the second one aborts even if seats remain (it does not re-evaluate
+the `WHERE` as in READ COMMITTED). Aborts concentrated on the hot row.
 
-**E3 en SERIALIZABLE — no sobrevende; el comprador que esperó en el `FOR UPDATE` aborta con `40001`.**
-El bloqueo no basta (A solo bloqueó la fila, no la modificó), pero SSI conserva los
-bloqueos de predicado de A después de su commit mientras B siga en curso. B cuenta con su
-foto vieja e inserta dentro de lo que A leyó: ciclo, y aborta B. Paga la espera y además el aborto.
+**E3 under SERIALIZABLE — does not oversell; the buyer that waited on the `FOR UPDATE` aborts with `40001`.**
+The lock is not enough (A only locked the row, it did not modify it), but SSI keeps A's
+predicate locks after its commit as long as B is still running. B counts with its old
+snapshot and inserts inside what A read: a cycle, and B aborts. It pays for the wait and for
+the abort.
 
-**E4 en READ COMMITTED — nunca hay dos reservas del mismo asiento; el segundo recibe `23505` (unique_violation).**
-La comprobación de unicidad no usa la foto de la transacción: si el otro `INSERT` está sin
-confirmar, el segundo espera; si confirma, hay violación, y si hace rollback, procede.
+**E4 under READ COMMITTED — there are never two reservations of the same seat; the second gets `23505` (unique_violation).**
+The uniqueness check does not use the transaction's snapshot: if the other `INSERT` is
+uncommitted, the second one waits; if it commits, there is a violation, and if it rolls back,
+it proceeds.
 
-**E4 en REPEATABLE READ — mismo resultado: ninguna doble reserva, error `23505`.**
-El índice único mira el estado de commit de las filas, no el snapshot, así que la foto
-vieja de la transacción no deja pasar un duplicado. Que el nivel sea más estricto no cambia nada aquí.
+**E4 under REPEATABLE READ — same result: no double booking, error `23505`.**
+The unique index looks at the commit state of the rows, not the snapshot, so the
+transaction's old snapshot does not let a duplicate through. A stricter level changes nothing
+here.
 
-**E4 en SERIALIZABLE — mismo resultado: ninguna doble reserva, error `23505` (no `40001`).**
-La documentación dice que los choques de unicidad entre transacciones serializables se
-siguen reportando como violación de unicidad, incluso a veces donde un orden serial no los
-habría producido, incluso si antes se comprobó que el asiento estaba libre.
+**E4 under SERIALIZABLE — same result: no double booking, error `23505` (not `40001`).**
+The documentation says that uniqueness conflicts between serializable transactions are still
+reported as a uniqueness violation, even sometimes where a serial order would not have
+produced them, even if the seat was checked as free beforehand.
 
-### Decisiones de alcance
+### Scope decisions
 
-- Resuelto el 2026-10-19: **E5 en READ COMMITTED y REPEATABLE READ — se mide, sin
-  predicción previa.** Las celdas no se marcan "no aplica"; lo que salga es un resultado.
+- Settled on 2026-10-19: **E5 under READ COMMITTED and REPEATABLE READ — measured, with no
+  prior prediction.** The cells are not marked "not applicable"; whatever comes out is a
+  result.
