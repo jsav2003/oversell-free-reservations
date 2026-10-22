@@ -105,6 +105,59 @@ B aborta con `40001` y, al reintentar en una transacción nueva, cuenta 2 y resp
 "agotado" (`test_e5_reintenta_y_termina_en_agotado`). No sobrevende; el costo está en los
 reintentos, que `RESULTS.md` cuantifica.
 
+## Cuánto aparece bajo carga
+
+Cifras de la matriz final (`RESULTS.md`, `backend/resultados_final/corridas.json`): 270
+corridas, 18 por combinación de estrategia y nivel (3 concurrencias × 2 contenciones × 3
+semillas), pool de la API de 20 conexiones, hasta 50 reintentos del cliente ante `40001`.
+
+| Combinación | Corridas con sobreventa | Puestos de más (suma) |
+|---|---|---|
+| E1 · READ COMMITTED | 9 de 18 | 62 |
+| E1 · REPEATABLE READ | 8 de 18 | 66 |
+| E3 · REPEATABLE READ | 9 de 18 | 141 |
+| E5 · READ COMMITTED | 6 de 18 | 57 |
+| E5 · REPEATABLE READ | 9 de 18 | 61 |
+| las otras 10 combinaciones | 0 de 18 cada una | 0 |
+
+Las cinco combinaciones que sobrevenden son exactamente las que la sección anterior
+reproduce con un intercalado fijo; las otras diez son las que ahí terminan en `40001`,
+"agotado" o `23505`. La carga y los tests dicen lo mismo. En las 270 corridas hubo 0 asientos
+con más de una reserva, 0 respuestas infieles, 0 claves de idempotencia repetidas y 0
+violaciones del invariante de retenciones.
+
+**La sobreventa solo apareció con contención escasa** (menos puestos que compradores). Con
+capacidad holgada ninguna de las 45 corridas de estas cinco combinaciones sobrevendió: si
+sobran puestos, el conteo equivocado no cambia el resultado.
+
+**Cuánto sobrevende depende de cuántas transacciones coinciden, y aquí eso lo limita el
+pool.** Puestos de más por corrida con contención escasa:
+
+| Compradores (capacidad) | E1 · RC | E1 · RR | E3 · RR | E5 · RC | E5 · RR |
+|---|---|---|---|---|---|
+| 10 (1) | 9, 9, 9 | 9, 9, 9 | 9, 9, 9 | 9, 9, 9 | 9, 9, 9 |
+| 100 (10) | 10, 10, 10 | 10, 10, 10 | 19, 19, 19 | 10, 10, 10 | 10, 10, 10 |
+| 1000 (100) | 1, 2, 2 | 0, 2, 7 | 19, 19, 19 | 0, 0, 0 | 2, 1, 1 |
+
+Con 10 compradores todos compran el único puesto. Con 100, E1 y E5 terminan en 20 reservas
+(el tamaño del pool) y E3 en 29. Con 1.000 baja a una cifra pequeña salvo en E3, que se queda
+en 19. Una **lectura mía, no verificada**: con un pool de 20, a lo sumo 20 transacciones
+corren a la vez, y eso acota cuántas pueden contar con una foto vieja; los números coinciden,
+pero no corrí la matriz con otro tamaño de pool. La consecuencia es que estas cifras
+**subestiman** lo que pasaría con más conexiones, y que no deben leerse como una tasa.
+
+**Lo que cuestan las que no sobrevenden.** El reintento del cliente hace que E1, E2 y E3 en
+SERIALIZABLE (y E2 en REPEATABLE READ) vendan todo, pero con 1.000 compradores 21 corridas
+tienen compras que agotaron los 50 reintentos (224 en total: E1·SER 52, E2·RR 61, E2·SER 71,
+E3·SER 40). E5 en SERIALIZABLE no perdió ninguna. La latencia mediana con 1.000 compradores y
+capacidad holgada va de unos 10 s (E1·RC) a unos 122 s (E3·SER); buena parte es cola del pool,
+no trabajo de la base, así que esas latencias se comparan entre estrategias, no como números
+absolutos.
+
+**E4 vende menos de lo que hay, y es correcto.** Cada comprador pide un asiento al azar, así
+que con 1.000 compradores y 2.000 asientos se repiten y el repetido recibe `ocupado`: 783
+ventas de media, 0 asientos duplicados.
+
 ## Qué no se probó aquí
 
 - **Que el test sea la prueba de la frecuencia.** Reproducir la anomalía una vez demuestra
@@ -112,4 +165,10 @@ reintentos, que `RESULTS.md` cuantifica.
 - **Más de dos compradores.** Los guiones son de A contra B. Los efectos con decenas de
   transacciones (por ejemplo, qué transacción elige SSI como víctima) los cubre la carga,
   no estos tests.
-- **Retenciones y commit ambiguo** (§3.4 y §5): son la F4.
+- **Retenciones y commit ambiguo** (§3.4 y §5): no son anomalías de aislamiento y no están
+  aquí. Los tres escenarios de falla de la §8.4 (matar la API entre el `COMMIT` y la
+  respuesta, cortar al cliente, pago después del vencimiento) están en
+  `backend/tests/test_fallas.py`; en los tres, el reintento con la misma clave de
+  idempotencia deja 0 violaciones.
+- **Otro tamaño de pool u otra máquina.** Todo se midió con el pool en 20 y el cliente, la API
+  y Postgres en el mismo portátil (ver README).
