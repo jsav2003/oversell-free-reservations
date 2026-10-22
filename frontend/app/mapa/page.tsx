@@ -19,7 +19,8 @@ export default function Mapa() {
   const [aviso, setAviso] = useState<{ texto: string; error: boolean } | null>(null);
   const [ttl, setTtl] = useState(30);
   const [demoraPago, setDemoraPago] = useState(2);
-  const [, setReloj] = useState(0);
+  const [reloj, setReloj] = useState(0);
+  const pagando = useRef(new Set<number>());
 
   // El evento puede venir en la URL (?evento=12) para que dos pestañas compitan.
   useEffect(() => {
@@ -42,6 +43,24 @@ export default function Mapa() {
   }, []);
 
   const ahoraServidor = () => Date.now() + desfase.current;
+
+  // Una retención que vence sin pagarse deja de ser tuya: se quita su fila y su botón "Pagar".
+  // Las que están pagándose las resuelve la respuesta del servidor, no el reloj de aquí.
+  useEffect(() => {
+    const vencidas = Object.entries(mias)
+      .filter(([k, m]) => !pagando.current.has(Number(k)) && Date.parse(m.venceEn) <= ahoraServidor())
+      .map(([k]) => Number(k));
+    if (vencidas.length === 0) return;
+    setMias((x) => {
+      const copia = { ...x };
+      vencidas.forEach((n) => delete copia[n]);
+      return copia;
+    });
+    setAviso({
+      texto: `Tu retención del asiento ${vencidas.join(", ")} venció sin pagarse y volvió a estar disponible.`,
+      error: true,
+    });
+  }, [reloj, mias]);
 
   async function crearEvento() {
     const r = await post<{ evento_id: number }>("/eventos", { nombre: "mapa", capacidad: 40 });
@@ -89,6 +108,7 @@ export default function Mapa() {
     async (n: number) => {
       const m = mias[n];
       if (!m) return;
+      pagando.current.add(n);
       setAviso({ texto: `Procesando el pago del asiento ${n}…`, error: false });
       await dormir(demoraPago * 1000); // pago simulado (NO-GOALS: sin pagos reales)
       try {
@@ -111,6 +131,7 @@ export default function Mapa() {
       } catch {
         setAviso({ texto: "No se pudo contactar al servidor para confirmar el pago.", error: true });
       }
+      pagando.current.delete(n);
       setMias((x) => {
         const copia = { ...x };
         delete copia[n];
