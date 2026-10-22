@@ -4,7 +4,8 @@ Para cada (estrategia, aislamiento) levanta una API con esa configuración (son 
 de la API, §6), corre las celdas contra ella y apaga el servidor. Escribe un JSON por
 corrida y, al final, RESULTS.md con media y rango por celda.
 
-Uso:  python -m carga.matriz [--rapida] [--salida DIR]
+Uso:  python -m carga.matriz [--rapida] [--salida DIR] [--pool N] [--estrategias ...]
+      [--aislamientos ...] [--contenciones ...] [--concurrencias ...]
 """
 import argparse
 import asyncio
@@ -85,16 +86,19 @@ async def una_corrida(conn, estrategia, aislamiento, compradores, contencion, ca
 
 
 async def correr_matriz(concurrencias, salida: Path, pool_size: int,
-                        max_reintentos_cliente: int) -> list[dict]:
+                        max_reintentos_cliente: int, estrategias=ESTRATEGIAS,
+                        niveles=NIVELES, contenciones_elegidas=None) -> list[dict]:
     resultados = []
     conn = await asyncpg.connect(DATABASE_URL)
     try:
-        for estrategia in ESTRATEGIAS:
-            for aislamiento in NIVELES:
+        for estrategia in estrategias:
+            for aislamiento in niveles:
                 api = levantar_api(estrategia, aislamiento, pool_size)
                 try:
                     for compradores in concurrencias:
                         for contencion, capacidad in contenciones(compradores).items():
+                            if contenciones_elegidas and contencion not in contenciones_elegidas:
+                                continue
                             for semilla in SEMILLAS:
                                 r = await una_corrida(conn, estrategia, aislamiento,
                                                       compradores, contencion, capacidad, semilla,
@@ -157,10 +161,18 @@ def main() -> None:
     parser.add_argument("--pool", type=int, default=20)
     parser.add_argument("--reintentos-cliente", type=int, default=0,
                         help="veces que el cliente repite una compra abortada (40001)")
+    parser.add_argument("--estrategias", nargs="+", choices=ESTRATEGIAS, default=ESTRATEGIAS)
+    parser.add_argument("--aislamientos", nargs="+", choices=NIVELES, default=NIVELES)
+    parser.add_argument("--contenciones", nargs="+", choices=("holgada", "escasa"),
+                        help="solo estas contenciones (por defecto, las dos)")
+    parser.add_argument("--concurrencias", nargs="+", type=int,
+                        help="reemplaza 10 100 1000 (o 10 100 con --rapida)")
     args = parser.parse_args()
-    concurrencias = (10, 100) if args.rapida else (10, 100, 1000)
+    concurrencias = tuple(args.concurrencias) if args.concurrencias else (
+        (10, 100) if args.rapida else (10, 100, 1000))
     resultados = asyncio.run(correr_matriz(concurrencias, args.salida, args.pool,
-                                         args.reintentos_cliente))
+                                         args.reintentos_cliente, args.estrategias,
+                                         args.aislamientos, args.contenciones))
     escribir_resultados(resultados, args.salida / "RESULTS.md", args.pool,
                         args.reintentos_cliente)
 
