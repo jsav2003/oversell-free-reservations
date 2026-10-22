@@ -60,8 +60,9 @@ da `40001`, no `23505` (`ANOMALIES.md`).
   valen como comparaciones entre estrategias, no como números absolutos.
 - **Pool de 20 conexiones en la API.** Las latencias con 1.000 compradores (decenas de
   segundos) son sobre todo cola del pool, no trabajo de la base. Con 20 conexiones, la
-  sobreventa medida queda acotada por cuántas transacciones coinciden: las cifras no son una
-  tasa y probablemente subestiman lo que pasaría con más conexiones (no se midió con otro pool).
+  sobreventa medida la acota el tamaño del pool: en E3 en REPEATABLE READ es el pool menos uno
+  (19, 49 y 89 con pool de 20, 50 y 90; `backend/resultados_pool/`). Las cifras de sobreventa
+  no son una tasa, y con más conexiones serían mayores.
 - **Tope de 50 reintentos:** con 1.000 compradores, 224 compras (21 corridas, en E1·SER,
   E2·RR, E2·SER y E3·SER) lo agotaron. Se reporta como costo de la estrategia.
 - La carga no prueba ausencia de sobreventa; eso lo hacen los tests de intercalado.

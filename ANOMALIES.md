@@ -141,10 +141,24 @@ pool.** Puestos de más por corrida con contención escasa:
 
 Con 10 compradores todos compran el único puesto. Con 100, E1 y E5 terminan en 20 reservas
 (el tamaño del pool) y E3 en 29. Con 1.000 baja a una cifra pequeña salvo en E3, que se queda
-en 19. Una **lectura mía, no verificada**: con un pool de 20, a lo sumo 20 transacciones
-corren a la vez, y eso acota cuántas pueden contar con una foto vieja; los números coinciden,
-pero no corrí la matriz con otro tamaño de pool. La consecuencia es que estas cifras
-**subestiman** lo que pasaría con más conexiones, y que no deben leerse como una tasa.
+en 19. **Comprobado con otro tamaño de pool** (`backend/resultados_pool/`: E1 y E3,
+contención escasa, 3 semillas, pool de 50 y de 90 en vez de 20):
+
+| Puestos de más por corrida | Pool 20 | Pool 50 | Pool 90 |
+|---|---|---|---|
+| E1 · RC y RR, 100 compradores (capacidad 10) | 10 | 40 | 80 |
+| E3 · RR, 100 compradores (capacidad 10) | 19 | 49 | 89 |
+| E3 · RR, 1000 compradores (capacidad 100) | 19 | 49 | 89 |
+| E3 · RC (control), 100 y 1000 compradores | 0 | 0 | 0 |
+
+Con 100 compradores y E3 la sobreventa es **el tamaño del pool menos uno** y con E1 es el
+pool menos la capacidad: lo que sobrevende es la tanda de transacciones que corren a la vez
+con una foto vieja, y esa tanda la acota el pool. El control (E3 en READ COMMITTED) sigue en
+0. Es decir, **la magnitud es un artefacto del pool y no una propiedad de la estrategia**:
+estas cifras no deben leerse como una tasa, y con más conexiones sobrevenderían más.
+Lo que no queda explicado: E1 con 1.000 compradores no sigue la regla (pool 20: 0–7; pool 50:
+0; pool 90: 80 en las tres semillas); con capacidad 100 la tanda inicial cabe entera en el
+pool de 50 sin cruzar la capacidad, pero no probé más allá de eso, así que es una lectura mía.
 
 **Lo que cuestan las que no sobrevenden.** El reintento del cliente hace que E1, E2 y E3 en
 SERIALIZABLE (y E2 en REPEATABLE READ) vendan todo, pero con 1.000 compradores 21 corridas
