@@ -1,95 +1,97 @@
 # reservas-sin-sobreventa
 
-Una aplicación de reservas (FastAPI + asyncpg + Postgres 18.6 + Next.js) cuyo objetivo no es
-la app: es **demostrar con evidencia qué estrategias de concurrencia en Postgres sobrevenden,
-cuáles no, por qué y cuánto cuesta cada una**. El producto es una tabla de 5 estrategias × 3
-niveles de aislamiento × varias concurrencias, y cada anomalía reproducida de forma
-determinista en un test.
+A reservation app (FastAPI + asyncpg + Postgres 18.6 + Next.js) whose point is not the app:
+it is to **show, with evidence, which concurrency strategies in Postgres oversell, which
+do not, why, and what each one costs**. The product is a table of 5 strategies × 3
+isolation levels × several concurrency levels, plus every anomaly reproduced
+deterministically in a test.
 
-## Lo que hay que ver en 30 segundos
+> The project name, the code identifiers and the UI text are in Spanish (the project started
+> as a Spanish-language course project). The documentation is in English.
 
-**E1 ("contar y luego insertar") sobrevende en READ COMMITTED y también en REPEATABLE READ.**
-Que el nivel sea más estricto no ayuda: su foto de la base es justo lo que impide ver la
-reserva del otro comprador.
+## What to see in 30 seconds
 
-Sobreventa medida bajo carga (270 corridas, 18 por combinación, pool de 20 conexiones):
+**E1 ("count, then insert") oversells under READ COMMITTED and also under REPEATABLE READ.**
+A stricter level does not help: its snapshot is exactly what stops it from seeing the other
+buyer's reservation.
 
-| Estrategia | READ COMMITTED | REPEATABLE READ | SERIALIZABLE |
+Overselling measured under load (270 runs, 18 per combination, API pool of 20 connections):
+
+| Strategy | READ COMMITTED | REPEATABLE READ | SERIALIZABLE |
 |---|---|---|---|
-| E1 · leer y luego insertar | **sobrevende** (62 puestos de más) | **sobrevende** (66) | no |
-| E2 · `UPDATE` condicional | no | no | no |
-| E3 · `SELECT … FOR UPDATE` | no | **sobrevende** (141) | no |
-| E4 · restricción `UNIQUE` (por asiento) | no | no | no |
-| E5 · SERIALIZABLE con reintento | **sobrevende** (57) | **sobrevende** (61) | no |
+| E1 · read, then insert | **oversells** (62 extra seats) | **oversells** (66) | no |
+| E2 · conditional `UPDATE` | no | no | no |
+| E3 · `SELECT … FOR UPDATE` | no | **oversells** (141) | no |
+| E4 · `UNIQUE` constraint (per seat) | no | no | no |
+| E5 · SERIALIZABLE with retry | **oversells** (57) | **oversells** (61) | no |
 
-E3 es el resultado menos obvio: el bloqueo pesimista parece seguro y en REPEATABLE READ no
-lo es, porque quien espera el `FOR UPDATE` conserva la foto de antes de la espera.
-Las que no sobrevenden cuestan otra cosa (abortos y reintentos, latencia): ver
-[`RESULTS.md`](RESULTS.md).
+E3 is the least obvious result: pessimistic locking looks safe and under REPEATABLE READ it
+is not, because the buyer waiting on `FOR UPDATE` keeps the snapshot from before the wait.
+The strategies that do not oversell pay in something else (aborts and retries, latency):
+see [`RESULTS.md`](RESULTS.md).
 
-## Documentos
+## Documents
 
-| Archivo | Qué es |
+| File | What it is |
 |---|---|
-| [`DESIGN.md`](DESIGN.md) | El diseño: modelos, estrategias, invariantes, plan por fases |
-| [`NO-GOALS.md`](NO-GOALS.md) | Lo que el proyecto no hace, fijado antes de escribir código |
-| [`PREDICTIONS.md`](PREDICTIONS.md) | Predicciones fechadas **antes** de medir; no se editan después |
-| [`ANOMALIES.md`](ANOMALIES.md) | Cada anomalía con su intercalado exacto, el test que la reproduce, las predicciones refutadas y cuánto aparece bajo carga |
-| [`RESULTS.md`](RESULTS.md) | La matriz completa (media y rango de 3 semillas por celda), generada |
-| `backend/resultados_final/corridas.json` | Las 270 corridas de la matriz final, una por una |
+| [`DESIGN.md`](DESIGN.md) | The design: models, strategies, invariants, plan by phases |
+| [`NO-GOALS.md`](NO-GOALS.md) | What the project does not do, fixed before writing any code |
+| [`PREDICTIONS.md`](PREDICTIONS.md) | Predictions dated **before** measuring; not edited afterwards |
+| [`ANOMALIES.md`](ANOMALIES.md) | Every anomaly with its exact interleaving, the test that reproduces it, the refuted predictions, and how often each shows up under load |
+| [`RESULTS.md`](RESULTS.md) | The full matrix (mean and range over 3 seeds per cell), generated |
+| `backend/resultados_final/corridas.json` | The 270 runs of the final matrix, one by one |
 
-Una predicción falló y se documenta: E4 en SERIALIZABLE con comprobación previa del asiento
-da `40001`, no `23505` (`ANOMALIES.md`).
+One prediction failed and is documented: E4 under SERIALIZABLE with a prior check of the seat
+gives `40001`, not `23505` (`ANOMALIES.md`).
 
-## Cómo está medido
+## How it is measured
 
-- **Evidencia de que la anomalía existe:** tests de intercalado determinista
-  (`backend/tests/test_intercalado.py`): dos conexiones, pasos en orden fijo, sin sleeps.
-- **Frecuencia y costo:** generador de carga propio (asyncio + httpx) y un verificador que
-  comprueba, contra la base, cinco invariantes: sobreventa, asiento duplicado, respuestas
-  fieles a la base, claves de idempotencia y retenciones.
-- **Matriz:** estrategia × aislamiento × concurrencia (10, 100, 1.000) × contención
-  (holgada, escasa) × 3 semillas. Cada celda reporta media y rango, nunca la mejor corrida.
-  El cliente reintenta hasta 50 veces ante `40001` para que el throughput sea comparable.
+- **Evidence that the anomaly exists:** deterministic interleaving tests
+  (`backend/tests/test_intercalado.py`): two connections, steps in a fixed order, no sleeps.
+- **Frequency and cost:** a purpose-built load generator (asyncio + httpx) and a verifier
+  that checks five invariants against the database: overselling, duplicate seat,
+  responses faithful to the database, idempotency keys and holds.
+- **Matrix:** strategy × isolation × concurrency (10, 100, 1,000) × contention (ample,
+  scarce) × 3 seeds. Each cell reports mean and range, never the best run. The client
+  retries up to 50 times on `40001` so that throughput is comparable.
 
-### Entorno de medición y límites
+### Measurement environment and limits
 
-- Portátil con AMD Ryzen 5 7520U (4 núcleos, 8 hilos), 15 GB de RAM, Windows 11, Docker
-  Desktop (8 CPU, 7,9 GB para Docker), Postgres 18.6, Python 3.12.
-- **El generador de carga, la API y Postgres comparten la misma máquina.** Las conclusiones
-  valen como comparaciones entre estrategias, no como números absolutos.
-- **Pool de 20 conexiones en la API.** Las latencias con 1.000 compradores (decenas de
-  segundos) son sobre todo cola del pool, no trabajo de la base. Con 20 conexiones, la
-  sobreventa medida la acota el tamaño del pool: en E3 en REPEATABLE READ es el pool menos uno
-  (19, 49 y 89 con pool de 20, 50 y 90; `backend/resultados_pool/`). Las cifras de sobreventa
-  no son una tasa, y con más conexiones serían mayores.
-- **Tope de 50 reintentos:** con 1.000 compradores, 224 compras (21 corridas, en E1·SER,
-  E2·RR, E2·SER y E3·SER) lo agotaron. Se reporta como costo de la estrategia.
-- La carga no prueba ausencia de sobreventa; eso lo hacen los tests de intercalado.
+- Laptop with an AMD Ryzen 5 7520U (4 cores, 8 threads), 15 GB of RAM, Windows 11, Docker
+  Desktop (8 CPUs, 7.9 GB for Docker), Postgres 18.6, Python 3.12.
+- **The load generator, the API and Postgres share the same machine.** Conclusions hold as
+  comparisons between strategies, not as absolute numbers.
+- **API pool of 20 connections.** Latencies with 1,000 buyers (tens of seconds) are mostly
+  pool queueing, not database work. The measured overselling is bounded by the pool size:
+  for E3 under REPEATABLE READ it is the pool size minus one (19, 49 and 89 with a pool of 20,
+  50 and 90; `backend/resultados_pool/`). The overselling figures are not a rate, and with
+  more connections they would be larger.
+- **Retry cap of 50:** with 1,000 buyers, 224 purchases (21 runs, in E1·SER, E2·RR, E2·SER
+  and E3·SER) exhausted it. It is reported as a cost of the strategy.
+- Load does not prove the absence of overselling; the interleaving tests do.
 
-## Cómo correrlo
+## How to run it
 
-Requisitos: Docker y Python 3.12.
+Requirements: Docker and Python 3.12.
 
 ```bash
-# Postgres, migraciones, API (puerto 8000) y frontend (puerto 3000)
+# Postgres, migrations, API (port 8000) and frontend (port 3000)
 docker compose up -d --build
 
-# Tests (con el compose arriba): 103 pasan y 1 xfail estricto
+# Tests (with compose up): 103 pass and 1 strict xfail
 cd backend
-python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   # en Linux/Mac: .venv/bin/
+python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   # Linux/Mac: .venv/bin/
 .venv/Scripts/python -m pytest
 ```
 
-La API elige estrategia y nivel por variables de entorno (`ESTRATEGIA` = `e1`…`e5`,
-`AISLAMIENTO` = `read_committed` | `repeatable_read` | `serializable`; por defecto
-`e5` en `serializable`). El frontend tiene un mapa de asientos en vivo (`/mapa`) y una
-página de laboratorio (`/laboratorio`) que corre una demo de compradores concurrentes y
-marca la sobreventa en rojo.
+The API picks the strategy and level from environment variables (`ESTRATEGIA` = `e1`…`e5`,
+`AISLAMIENTO` = `read_committed` | `repeatable_read` | `serializable`; default `e5` under
+`serializable`). The frontend has a live seat map (`/mapa`) and a lab page (`/laboratorio`)
+that runs a demo with concurrent buyers and marks overselling in red.
 
-### Reproducir la matriz
+### Reproducing the matrix
 
-La matriz levanta una API por celda y toca la base, así que conviene una Postgres aparte:
+The matrix starts one API per cell and writes to the database, so use a separate Postgres:
 
 ```bash
 docker run -d --name pg-matriz -p 127.0.0.1:5434:5432 \
@@ -101,22 +103,24 @@ export DATABASE_URL=postgresql://reservas:reservas@127.0.0.1:5434/reservas
 .venv/Scripts/python -m carga.matriz --reintentos-cliente 50 --salida resultados_final
 ```
 
-Son 270 corridas y tarda horas (la de 1.000 compradores con SERIALIZABLE es la lenta).
-No toques `backend/app/` mientras corre: cada celda importa ese código. `--rapida` corre
-solo 10 y 100 compradores. Los números cambian de una máquina a otra; lo que debe
-repetirse es *qué combinaciones sobrevenden y cuáles no*.
+That is 270 runs and takes hours (the 1,000-buyer SERIALIZABLE cells are the slow ones).
+Do not touch `backend/app/` while it runs: every cell imports that code. `--rapida` runs
+only 10 and 100 buyers, and `--estrategias`, `--aislamientos`, `--contenciones` and
+`--concurrencias` run a subset. `--regenerar DIR` rewrites `DIR/RESULTS.md` from
+`DIR/corridas.json` without running anything. The numbers change from one machine to
+another; what should repeat is *which combinations oversell and which do not*.
 
-## Estructura
+## Layout
 
 ```
-backend/app/        API: estrategias E1–E5, retenciones, idempotencia, estado en vivo (SSE)
-backend/carga/      generador de carga, verificador de invariantes, runner de la matriz
-backend/tests/      intercalado determinista, invariantes, fallas, idempotencia
-backend/migrations/ SQL plano (sin ORM ni Alembic)
-frontend/           Next.js: mapa de asientos y laboratorio
+backend/app/        API: strategies E1–E5, holds, idempotency, live state (SSE)
+backend/carga/      load generator, invariant verifier, matrix runner
+backend/tests/      deterministic interleaving, invariants, failures, idempotency
+backend/migrations/ plain SQL (no ORM, no Alembic)
+frontend/           Next.js: seat map and lab
 ```
 
-## Fuera de alcance
+## Out of scope
 
-Pagos reales, autenticación, microservicios, varias regiones y competir en rendimiento con
-sistemas de ticketing: ver [`NO-GOALS.md`](NO-GOALS.md).
+Real payments, authentication, microservices, multiple regions, and competing on performance
+with real ticketing systems: see [`NO-GOALS.md`](NO-GOALS.md).
