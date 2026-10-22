@@ -1,4 +1,4 @@
-# reservas-sin-sobreventa
+# oversell-free-reservations
 
 A reservation app (FastAPI + asyncpg + Postgres 18.6 + Next.js) whose point is not the app:
 it is to **show, with evidence, which concurrency strategies in Postgres oversell, which
@@ -6,7 +6,7 @@ do not, why, and what each one costs**. The product is a table of 5 strategies Ã
 isolation levels Ã— several concurrency levels, plus every anomaly reproduced
 deterministically in a test.
 
-> The project name, the code identifiers and the UI text are in Spanish (the project started
+> The code identifiers and the UI text are in Spanish (the project started
 > as a Spanish-language course project). The documentation is in English.
 
 ## What to see in 30 seconds
