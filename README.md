@@ -124,3 +124,7 @@ frontend/           Next.js: seat map and lab
 
 Real payments, authentication, microservices, multiple regions, and competing on performance
 with real ticketing systems: see [`NO-GOALS.md`](NO-GOALS.md).
+
+## License
+
+[MIT](LICENSE)
